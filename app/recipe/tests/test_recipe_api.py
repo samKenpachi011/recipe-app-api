@@ -9,6 +9,9 @@ from django.urls import reverse
 
 from rest_framework import status
 from rest_framework.test import APIClient
+import os
+import tempfile
+from PIL import Image
 
 from core.models import Recipe, Tag, Ingredient
 from recipe.serializers import (
@@ -18,6 +21,11 @@ from recipe.serializers import (
 
 
 RECIPE_URL = reverse('recipe:recipe-list')
+
+
+def image_upload_url(recipe_id):
+    """Create and return an image upload URL"""
+    return reverse('recipe:recipe-upload-image', args=[recipe_id])
 
 
 def create_recipe(user, **params):
@@ -408,3 +416,48 @@ class PrivateRecipeAPITests(TestCase):
 
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertEqual(recipe.ingredient.count(), 0)
+
+
+class ImageUploadTests(TestCase):
+    """Tests for uploading recipe image"""
+
+    def setUp(self):
+        self.client = APIClient()
+
+        self.user = get_user_model().objects.create_user(
+            email='user@example.com', password='testpass123')
+
+        self.client.force_authenticate(self.user)
+
+        self.recipe = create_recipe(user=self.user)
+
+    def tearDown(self):
+        self.recipe.image.delete()
+
+    def test_upload_image_bad_request(self):
+        """Test return error on bad image request"""
+
+        url = image_upload_url(self.recipe.id)
+        payload = {'image': 'noimage'}
+        res = self.client.post(url, payload, format='multipart')
+
+        self.assertEqual(res.status_code,  status.HTTP_400_BAD_REQUEST)
+
+    def test_upload_image_success(self):
+        """Test add image to recipe"""
+
+        url = image_upload_url(self.recipe.id)
+        with tempfile.NamedTemporaryFile(suffix='.jpg') as image_file:
+            img = Image.new('RGB', (10, 10))
+            img.save(image_file)
+            image_file.seek(0)
+            payload = {'image': image_file}
+
+            res = self.client.post(url, payload, format='multipart')
+            self.recipe.refresh_from_db()
+
+            self.assertEqual(res.status_code, status.HTTP_200_OK)
+            self.assertIn('image', res.data)
+
+            self.assertTrue(os.path.exists(self.recipe.image.path))
+
